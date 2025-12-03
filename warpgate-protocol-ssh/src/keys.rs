@@ -2,7 +2,9 @@ use std::fs::{create_dir_all, File};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use russh::keys::{encode_pkcs8_pem, load_secret_key, HashAlg, PrivateKey};
+use russh::keys::{
+    encode_pkcs8_pem, load_openssh_certificate, load_secret_key, Certificate, HashAlg, PrivateKey,
+};
 use tracing::*;
 use warpgate_common::helpers::fs::{secure_directory, secure_file};
 use warpgate_common::helpers::rng::get_crypto_rng;
@@ -50,5 +52,28 @@ pub fn load_keys(
     Ok(vec![
         load_secret_key(path.join(format!("{prefix}-ed25519")), None)?,
         load_secret_key(path.join(format!("{prefix}-rsa")), None)?,
+    ])
+}
+
+pub fn load_client_keys(
+    config: &WarpgateConfig,
+    prefix: &str,
+) -> Result<Vec<(PrivateKey, Option<Certificate>)>, russh::keys::Error> {
+    let path = get_keys_path(config);
+    Ok(vec![
+        (
+            load_secret_key(path.join(format!("{prefix}-ed25519")), None)?,
+            match load_openssh_certificate(path.join(format!("{prefix}-ed25519.pub"))) {
+                Ok(x) => Some(x),
+                _ => None,
+            },
+        ),
+        (
+            load_secret_key(path.join(format!("{prefix}-rsa")), None)?,
+            match load_openssh_certificate(path.join(format!("{prefix}-rsa.pub"))) {
+                Ok(x) => Some(x),
+                _ => None,
+            },
+        ),
     ])
 }

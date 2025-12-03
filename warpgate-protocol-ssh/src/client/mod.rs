@@ -29,7 +29,7 @@ use warpgate_core::Services;
 use self::handler::ClientHandlerEvent;
 use super::{ChannelOperation, DirectTCPIPParams};
 use crate::client::handler::ClientHandlerError;
-use crate::{load_keys, ForwardedStreamlocalParams, ForwardedTcpIpParams};
+use crate::{load_client_keys, ForwardedStreamlocalParams, ForwardedTcpIpParams};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionError {
@@ -559,21 +559,28 @@ impl RemoteClient {
                         SSHTargetAuth::PublicKey(_) => {
                             let best_hash = session.best_supported_rsa_hash().await?.flatten();
                             #[allow(clippy::explicit_auto_deref)]
-                            let keys = load_keys(&*self.services.config.lock().await, "client")?;
+                            let keys = load_client_keys(&*self.services.config.lock().await, "client")?;
                             let allow_insecure_algos = ssh_options.allow_insecure_algos.unwrap_or(false);
-                            for key in keys.into_iter() {
-                                let key = Arc::new(key);
+                            for ckey in keys.into_iter() {
+                                let key = Arc::new(ckey.0);
                                 if key.key_data().is_rsa() && best_hash.is_none() && !allow_insecure_algos {
                                     info!("Skipping ssh-rsa (SHA1) key authentication since insecure SSH algos are not allowed for this target");
                                     continue;
                                 }
                                 let key_str = key.public_key().to_openssh().map_err(russh::Error::from)?;
-                                let mut response  = session
+                                let mut response = match ckey.1 {
+                                    Some(c) => session
+                                    .authenticate_openssh_cert(
+                                        ssh_options.username.clone(),
+                                        key.clone(),
+                                        c,
+                                    ).await?,
+                                    None => session
                                     .authenticate_publickey(
                                         ssh_options.username.clone(),
                                         PrivateKeyWithHashAlg::new(key.clone(), best_hash),
-                                    )
-                                    .await?;
+                                    ).await?,
+                                };
 
                                 auth_result = self._handle_auth_result(
                                     &mut session,
